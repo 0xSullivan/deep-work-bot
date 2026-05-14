@@ -1,86 +1,128 @@
 # Deep Work Telegram Bot
 
-A simple Telegram bot that lets people mark themselves as unavailable for deep work. When someone starts or cancels a focus session, the bot notifies one or more configured Telegram targets so teammates know not to interrupt them.
+Focus Status Bot is a small Telegram bot that lets teammates mark themselves as unavailable for deep work. When someone starts, cancels, or reaches the end of a focus session, the bot notifies the configured Telegram chats, channels, or forum topics.
 
-## Purpose
+The bot is intentionally stateless. It stores known users and active sessions only in memory, so restarting the process clears all status.
 
-The bot keeps a lightweight, in-memory list of users and their current deep work status. It is intentionally stateless: no database, custom user profiles, or persistent history.
+## Features
 
-## Workflow
+- Inline buttons for `Start Deep Work`, `Cancel Deep Work`, and `Status`.
+- `/start`, `/help`, and `/status` commands.
+- In-memory tracking of every user who has interacted with the running bot process.
+- Automatic session expiry after `DEEP_WORK_DURATION_MINUTES`.
+- Starting deep work again while active resets the timer.
+- Notifications to multiple Telegram chats, channels, and forum topics.
 
-1. A user starts the bot.
-2. If the user is not in deep work mode, the bot shows:
-   - `Start Deep Work`: starts a deep work session.
-   - `Status`: shows every known user's current status.
-3. If the user is already in deep work mode, the bot shows:
-   - `Cancel Deep Work`: ends the user's current deep work session.
-   - `Status`: shows every known user's current status.
-4. When a user starts deep work:
-   - The bot stores their status in memory.
-   - The bot sends a notification to every configured Telegram target.
-   - The session automatically expires after the configured duration.
-5. If a user starts deep work again while already active, the bot resets their timer to the configured default duration.
-6. When a user cancels deep work, the bot clears their status and sends a cancellation notification to every configured target.
+## Requirements
 
-## Status Rules
+- Python 3.13 or newer.
+- A Telegram bot token from BotFather.
+- The bot must be added to every target group, channel, or forum topic it should notify.
+- For channels, the bot needs permission to post messages.
 
-- `Status` shows all users known to the running bot process.
-- A user is identified by their Telegram display name.
-- No custom names are stored.
-- All state is kept in memory and is lost when the bot restarts.
+## Setup
 
-## Telegram Targets
+Install dependencies with your preferred Python tool. With `uv`:
 
-The bot can notify multiple Telegram targets. Each target is configured with environment variables and may be a:
+```bash
+uv sync
+```
 
-- Group
-- Channel
-- Forum topic
+Or with `pip`:
 
-For forum topics, configure both the chat ID and the topic/message thread ID.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+```
+
+Create local configuration:
+
+```bash
+cp config.example.env config.env
+```
+
+Edit `config.env` with your real values. Do not commit `config.env`.
 
 ## Configuration
-
-Create `config.env` for local configuration and keep `config.example.env` committed as a template.
-
-Recommended variables:
 
 ```env
 BOT_TOKEN=123456:telegram-bot-token
 DEEP_WORK_DURATION_MINUTES=25
 
-# Comma-separated target chat IDs.
-# These may point to groups or channels.
+# Comma-separated target chat IDs for groups or channels.
 NOTIFY_CHAT_IDS=-1001234567890,-1009876543210
 
 # Optional comma-separated forum topic targets.
 # Format: chat_id:message_thread_id
 NOTIFY_TOPIC_TARGETS=-1001234567890:42,-1009876543210:7
+
+# Optional Python logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+LOG_LEVEL=INFO
 ```
 
-## Implementation Guide
+`BOT_TOKEN` is required. `DEEP_WORK_DURATION_MINUTES` must be a positive integer.
 
-- Use Python.
-- Use `python-telegram-bot` unless there is a strong reason to choose another SDK.
-- Keep the implementation simple and short.
-- Keep all runtime state in memory.
-- Use `config.env` for secrets and local settings.
-- Include `config.example.env` with placeholder values.
-- Do not commit real bot tokens or private chat IDs.
+`NOTIFY_CHAT_IDS` and `NOTIFY_TOPIC_TARGETS` may be left empty for local testing, but no start, cancel, or expiry notifications will be sent until at least one target is configured.
 
-## Bot Text
+Forum topic targets require both the parent chat ID and the topic message thread ID in `chat_id:message_thread_id` format.
 
-- Bot name: `Focus Status Bot`
-- Start button: `Start Deep Work`
-- Cancel button: `Cancel Deep Work`
-- Status button: `Status`
-- Active state: `In deep work`
-- Inactive state: `Available`
-- Start notification: `{user} started deep work for {minutes} minutes.`
-- Cancel notification: `{user} canceled deep work.`
-- Expiry notification: `{user}'s deep work session ended.`
+## Running
 
-## Expected Files
+With `uv`:
+
+```bash
+uv run python main.py
+```
+
+With an activated virtual environment:
+
+```bash
+python main.py
+```
+
+The bot uses long polling. Stop it with `Ctrl-C`.
+
+## Usage
+
+Open a chat with the bot and send `/start`.
+
+If you are available, the bot shows:
+
+- `Start Deep Work`
+- `Status`
+
+If you are already in deep work mode, the bot shows:
+
+- `Cancel Deep Work`
+- `Status`
+
+`Status` shows every user known to the current running process:
+
+```text
+Current status:
+- Ada Lovelace: In deep work
+- Grace Hopper: Available
+```
+
+Users are identified by their Telegram display name. If a display name is unavailable, the bot falls back to username or Telegram user ID.
+
+## Notification Text
+
+- Start: `{user} started deep work for {minutes} minutes.`
+- Cancel: `{user} canceled deep work.`
+- Expiry: `{user}'s deep work session ended.`
+
+## Runtime Behavior
+
+- All state is kept in memory.
+- Restarting the bot clears known users and active sessions.
+- Expired sessions are removed from memory.
+- Starting a new session while already active cancels the old timer and starts a fresh one.
+- Cancelling with no active session only updates the user's own bot message; no cancellation notification is sent.
+- Notification failures are logged and do not stop the bot.
+
+## Project Files
 
 ```text
 .
@@ -91,8 +133,4 @@ NOTIFY_TOPIC_TARGETS=-1001234567890:42,-1009876543210:7
 └── readme.md
 ```
 
-## Notes
-
-- Because the bot is stateless, restarting it clears all known users and active sessions.
-- Automatically expired sessions should be removed from memory.
-- Starting a new deep work session while one is already active should replace the old timer.
+`config.env` is local-only and ignored by git.
