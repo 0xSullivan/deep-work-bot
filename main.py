@@ -5,10 +5,12 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
 
 from dotenv import load_dotenv
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
@@ -25,6 +27,7 @@ STATUS = "status"
 
 ACTIVE_TEXT = "In deep work"
 INACTIVE_TEXT = "Available"
+BOT_NAME = "Focus Status Bot"
 
 
 @dataclass(frozen=True)
@@ -127,38 +130,112 @@ def keyboard(is_active: bool) -> InlineKeyboardMarkup:
     )
     return InlineKeyboardMarkup(
         [
-            [primary_button],
-            [InlineKeyboardButton("Status", callback_data=STATUS)],
+            [primary_button, InlineKeyboardButton("Status", callback_data=STATUS)],
         ]
     )
 
 
+def format_home(session: Session | None) -> str:
+    lines = [
+        f"<b>{BOT_NAME}</b>",
+        "",
+        f"Status: <b>{ACTIVE_TEXT if session else INACTIVE_TEXT}</b>",
+    ]
+    if session:
+        lines.extend(
+            [
+                f"Remaining: {format_remaining(session.expires_at)}",
+                f"Ends: {format_end_time(session.expires_at)}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def format_help(session: Session | None) -> str:
+    lines = [
+        f"<b>{BOT_NAME}</b>",
+        "",
+        "Use the buttons to update your availability or view team status.",
+        "",
+        f"Status: <b>{ACTIVE_TEXT if session else INACTIVE_TEXT}</b>",
+    ]
+    if session:
+        lines.extend(
+            [
+                f"Remaining: {format_remaining(session.expires_at)}",
+                f"Ends: {format_end_time(session.expires_at)}",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def format_status(state: BotState) -> str:
     if not state.known_users:
-        return "No known users yet."
+        return "<b>Deep Work Status</b>\n\nNo known users yet."
 
-    lines = ["Current status:"]
+    active_users: list[str] = []
+    available_users: list[str] = []
     for user_id, name in sorted(state.known_users.items(), key=lambda item: item[1].casefold()):
-        status = ACTIVE_TEXT if user_id in state.active_sessions else INACTIVE_TEXT
-        lines.append(f"- {name}: {status}")
+        session = state.active_sessions.get(user_id)
+        if session:
+            line = (
+                f"- {escape(name)}: {format_remaining(session.expires_at)}, "
+                f"ends {format_end_time(session.expires_at)}"
+            )
+            active_users.append(line)
+        else:
+            line = f"- {escape(name)}"
+            available_users.append(line)
+
+    lines = ["<b>Deep Work Status</b>"]
+    if active_users:
+        lines.extend(["", f"<b>{ACTIVE_TEXT}</b>", *active_users])
+    if available_users:
+        lines.extend(["", f"<b>{INACTIVE_TEXT}</b>", *available_users])
     return "\n".join(lines)
+
+
+def format_notification(title: str, detail: str | None = None) -> str:
+    lines = [f"<b>{escape(title)}</b>"]
+    if detail:
+        lines.append(escape(detail))
+    return "\n".join(lines)
+
+
+def format_remaining(expires_at: datetime) -> str:
+    remaining_seconds = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
+    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+    unit = "minute" if remaining_minutes == 1 else "minutes"
+    return f"{remaining_minutes} {unit}"
+
+
+def format_end_time(expires_at: datetime) -> str:
+    local_end = expires_at.astimezone()
+    local_now = datetime.now(UTC).astimezone()
+    if local_end.date() == local_now.date():
+        return local_end.strftime("%H:%M")
+    return local_end.strftime("%Y-%m-%d %H:%M")
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = get_state(context)
     user_id, _ = remember_user(update, state)
+    session = state.active_sessions.get(user_id)
     await update.effective_message.reply_text(
-        "Focus Status Bot",
-        reply_markup=keyboard(user_id in state.active_sessions),
+        format_home(session),
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard(session is not None),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = get_state(context)
     user_id, _ = remember_user(update, state)
+    session = state.active_sessions.get(user_id)
     await update.effective_message.reply_text(
-        "Use the buttons to start or cancel deep work and view team status.",
-        reply_markup=keyboard(user_id in state.active_sessions),
+        format_help(session),
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard(session is not None),
     )
 
 
@@ -167,6 +244,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id, _ = remember_user(update, state)
     await update.effective_message.reply_text(
         format_status(state),
+        parse_mode=ParseMode.HTML,
         reply_markup=keyboard(user_id in state.active_sessions),
     )
 
@@ -210,11 +288,16 @@ async def start_deep_work(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await notify_targets(
         context.application,
         state,
-        f"{name} started deep work for {state.duration_minutes} minutes.",
+        format_notification(
+            f"{name} started deep work",
+            f"Duration: {state.duration_minutes} minutes.\n"
+            f"Remaining: {format_remaining(expires_at)}.\n"
+            f"Ends: {format_end_time(expires_at)}.",
+        ),
     )
     await edit_message_text(
         query,
-        f"{ACTIVE_TEXT}. Timer set for {state.duration_minutes} minutes.",
+        format_home(state.active_sessions[user_id]),
         reply_markup=keyboard(is_active=True),
     )
 
@@ -229,10 +312,21 @@ async def cancel_deep_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     session = state.active_sessions.pop(user_id, None)
     if session is not None:
         session.task.cancel()
-        await notify_targets(context.application, state, f"{name} canceled deep work.")
-        message = INACTIVE_TEXT
+        await notify_targets(
+            context.application,
+            state,
+            format_notification(f"{name} canceled deep work"),
+        )
+        message = format_home(None)
     else:
-        message = "No active deep work session."
+        message = "\n".join(
+            [
+                f"<b>{BOT_NAME}</b>",
+                "",
+                "No active deep work session.",
+                f"Status: <b>{INACTIVE_TEXT}</b>",
+            ]
+        )
 
     await edit_message_text(query, message, reply_markup=keyboard(is_active=False))
 
@@ -247,7 +341,11 @@ async def expire_session(application: Application, user_id: int) -> None:
         if current_session is not session:
             return
         state.active_sessions.pop(user_id, None)
-        await notify_targets(application, state, f"{session.name}'s deep work session ended.")
+        await notify_targets(
+            application,
+            state,
+            format_notification(f"{session.name}'s deep work session ended"),
+        )
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -261,6 +359,7 @@ async def notify_targets(application: Application, state: BotState, text: str) -
                 chat_id=target.chat_id,
                 message_thread_id=target.message_thread_id,
                 text=text,
+                parse_mode=ParseMode.HTML,
             )
         except TelegramError:
             logging.exception("Failed to notify Telegram target %s", target)
@@ -272,7 +371,11 @@ async def edit_message_text(
     reply_markup: InlineKeyboardMarkup,
 ) -> None:
     try:
-        await query.edit_message_text(text, reply_markup=reply_markup)
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+        )
     except BadRequest as exc:
         if "Message is not modified" not in str(exc):
             raise

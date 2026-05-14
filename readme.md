@@ -6,7 +6,7 @@ The bot is intentionally stateless. It stores known users and active sessions on
 
 ## Features
 
-- Inline buttons for `Start Deep Work`, `Cancel Deep Work`, and `Status`.
+- Compact inline controls for `Start Deep Work`, `Cancel Deep Work`, and `Status`.
 - `/start`, `/help`, and `/status` commands.
 - In-memory tracking of every user who has interacted with the running bot process.
 - Automatic session expiry after `DEEP_WORK_DURATION_MINUTES`.
@@ -97,21 +97,49 @@ If you are already in deep work mode, the bot shows:
 - `Cancel Deep Work`
 - `Status`
 
-`Status` shows every user known to the current running process:
+The main bot message is a compact status panel:
 
 ```text
-Current status:
-- Ada Lovelace: In deep work
-- Grace Hopper: Available
+Focus Status Bot
+
+Status: Available
+```
+
+After starting deep work, it changes to:
+
+```text
+Focus Status Bot
+
+Status: In deep work
+Remaining: 25 minutes
+Ends: 14:30
+```
+
+`Status` shows every user known to the current running process, grouped by availability:
+
+```text
+Deep Work Status
+
+In deep work
+- Ada Lovelace: 18 minutes, ends 14:30
+
+Available
+- Grace Hopper
 ```
 
 Users are identified by their Telegram display name. If a display name is unavailable, the bot falls back to username or Telegram user ID.
 
 ## Notification Text
 
-- Start: `{user} started deep work for {minutes} minutes.`
-- Cancel: `{user} canceled deep work.`
-- Expiry: `{user}'s deep work session ended.`
+- Start:
+  ```text
+  {user} started deep work
+  Duration: {minutes} minutes.
+  Remaining: {minutes} minutes.
+  Ends: 14:30.
+  ```
+- Cancel: `{user} canceled deep work`
+- Expiry: `{user}'s deep work session ended`
 
 ## Runtime Behavior
 
